@@ -146,6 +146,41 @@ function saveLastUpdate() {
   }
 }
 
+// 이름이 바뀌거나 이전된 레포(예: facebook/astryx → meta/astryx)를 현재 이름으로 정규화.
+// README에서 파싱한 merged PR은 다시 조회하지 않으므로, 이게 없으면 처음 기록된 이름이 영원히 남는다.
+// GitHub은 옛 이름 요청을 새 레포로 301 리다이렉트하고 fetch가 이를 따라가므로 full_name이 현재 이름이다.
+async function resolveCanonicalRepos(contributions) {
+  const repoNames = [...new Set(contributions.map(c => c.repository))];
+  const canonical = new Map();
+
+  for (const repoName of repoNames) {
+    const { owner, repo } = getRepoParts(repoName);
+    try {
+      const data = await githubRequest(`/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`);
+      if (data.full_name && data.full_name.toLowerCase() !== repoName.toLowerCase()) {
+        console.log(`Repository renamed: ${repoName} -> ${data.full_name}`);
+        canonical.set(repoName, data.full_name);
+      }
+    } catch (error) {
+      console.log(`Unable to resolve repository ${repoName}, keeping as is: ${error.message}`);
+    }
+  }
+
+  return contributions.map(contrib => {
+    const newName = canonical.get(contrib.repository);
+    if (!newName) {
+      return contrib;
+    }
+
+    const prNumber = contrib.url.match(/\/pull\/(\d+)/)?.[1];
+    return {
+      ...contrib,
+      repository: newName,
+      url: prNumber ? `https://github.com/${newName}/pull/${prNumber}` : contrib.url
+    };
+  });
+}
+
 function escapeTableCell(value) {
   return String(value).replace(/\|/g, '\\|').replace(/\n/g, ' ');
 }
@@ -389,11 +424,13 @@ async function updateReadme(newContributions) {
 
     console.log(`Total merged contributions: ${allContributions.length} (${mergedExistingContributions.length} existing + ${mergedNewContributions.length} new + ${manualCount} manual)`);
     
-    // 중복 제거 (URL 기준)
+    // 레포 이름 변경 반영 후 중복 제거 (URL 기준) — 옛 URL과 새 URL로 같은 PR이 두 번 들어와도 하나로 합쳐진다
+    const canonicalContributions = (await resolveCanonicalRepos(allContributions))
+      .filter(contrib => !isBlacklisted(contrib.repository, blacklist));
     const uniqueContributions = [];
     const seenUrls = new Set();
-    
-    for (const contrib of allContributions) {
+
+    for (const contrib of canonicalContributions) {
       if (!seenUrls.has(contrib.url)) {
         seenUrls.add(contrib.url);
         uniqueContributions.push(contrib);
