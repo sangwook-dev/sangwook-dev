@@ -3,7 +3,7 @@ import path from 'node:path';
 
 const GITHUB_API_BASE = 'https://api.github.com';
 
-export const username = process.env.GITHUB_USERNAME || 'Han5991';
+export const username = process.env.GITHUB_USERNAME || 'sangwook-dev';
 
 export async function githubRequest(pathname, searchParams = {}) {
   const url = new URL(pathname, GITHUB_API_BASE);
